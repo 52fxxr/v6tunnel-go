@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
