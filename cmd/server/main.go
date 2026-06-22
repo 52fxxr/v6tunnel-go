@@ -26,6 +26,22 @@ type PortMapping struct {
 	LocalPort  int
 }
 
+type StreamConn struct {
+	sid       uint16
+	inbox     chan []byte
+	closeChan chan struct{}
+}
+
+type ClientConn struct {
+	id      uint64
+	conn    net.Conn
+	reader  io.Reader
+	writer  io.Writer
+	ports   map[int]bool
+	streams sync.Map // map[uint16]*StreamConn
+	mu      sync.RWMutex
+}
+
 type Server struct {
 	secret        string
 	listenAddr    string
@@ -34,15 +50,6 @@ type Server struct {
 	streamCounter atomic.Uint32
 	trafficRx     atomic.Uint64
 	trafficTx     atomic.Uint64
-}
-
-type ClientConn struct {
-	id     uint64
-	conn   net.Conn
-	reader io.Reader
-	writer io.Writer
-	ports  map[int]bool
-	mu     sync.RWMutex
 }
 
 func NewServer(secret, listenAddr string, ports []PortMapping) *Server {
@@ -58,12 +65,10 @@ func NewServer(secret, listenAddr string, ports []PortMapping) *Server {
 }
 
 func (s *Server) Run() error {
-	// 启动业务端口监听
 	for rport, pm := range s.ports {
 		go s.listenBusiness(rport, pm)
 	}
 
-	// 启动控制端口监听
 	listener, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
 		return fmt.Errorf("listen control: %w", err)
@@ -88,7 +93,6 @@ func (s *Server) handleControl(conn net.Conn) {
 	peer := conn.RemoteAddr().String()
 	log.Printf("control: new connection from %s", peer)
 
-	// 认证
 	msgType, payload, err := protocol.RecvMsg(conn)
 	if err != nil || msgType != protocol.MsgAuth || len(payload) != 8+32 {
 		protocol.SendMsg(conn, protocol.MsgReject, nil)
@@ -98,7 +102,6 @@ func (s *Server) handleControl(conn net.Conn) {
 	ts := int64(binary.BigEndian.Uint64(payload[:8]))
 	token := payload[8:]
 
-	// 校验密钥（不校验时间戳，兼容时钟偏差）
 	expectedToken := protocol.AuthToken(s.secret, ts)
 	if subtle.ConstantTimeCompare(token, expectedToken) != 1 {
 		log.Printf("control: auth failed from %s", peer)
@@ -110,7 +113,6 @@ func (s *Server) handleControl(conn net.Conn) {
 	}
 	log.Printf("control: auth ok from %s", peer)
 
-	// 注册客户端
 	clientID := s.streamCounter.Add(1)
 	client := &ClientConn{
 		id:     uint64(clientID),
@@ -122,7 +124,7 @@ func (s *Server) handleControl(conn net.Conn) {
 	s.clients.Store(client.id, client)
 	defer s.clients.Delete(client.id)
 
-	// 消息循环
+	// 单一读取循环
 	for {
 		msgType, payload, err := protocol.RecvMsg(conn)
 		if err != nil {
@@ -149,10 +151,29 @@ func (s *Server) handleControl(conn net.Conn) {
 			protocol.SendMsg(conn, protocol.MsgPong, payload)
 
 		case protocol.MsgPong:
-			// ignore
+
+		case protocol.MsgStreamData:
+			if len(payload) >= 2 {
+				sid := binary.BigEndian.Uint16(payload[:2])
+				data := payload[2:]
+				if v, ok := client.streams.Load(sid); ok {
+					sc := v.(*StreamConn)
+					select {
+					case sc.inbox <- data:
+					default:
+					}
+				}
+			}
 
 		case protocol.MsgStreamClose:
-			// 流关闭通知，由业务端处理
+			if len(payload) == 2 {
+				sid := binary.BigEndian.Uint16(payload[:2])
+				if v, ok := client.streams.Load(sid); ok {
+					sc := v.(*StreamConn)
+					close(sc.closeChan)
+					client.streams.Delete(sid)
+				}
+			}
 		}
 	}
 }
@@ -183,7 +204,6 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 
 	peer := extConn.RemoteAddr().String()
 
-	// 找一个注册了该端口的客户端
 	var client *ClientConn
 	s.clients.Range(func(key, value interface{}) bool {
 		c := value.(*ClientConn)
@@ -202,13 +222,21 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 		return
 	}
 
-	// 分配 stream ID
 	sid := uint16(s.streamCounter.Add(1) & 0xFFFF)
 	if sid == 0 {
 		sid = 1
 	}
 
 	log.Printf("business: %s -> :%d stream #%d", peer, rport, sid)
+
+	// 创建流数据通道
+	stream := &StreamConn{
+		sid:       sid,
+		inbox:     make(chan []byte, 256),
+		closeChan: make(chan struct{}),
+	}
+	client.streams.Store(sid, stream)
+	defer client.streams.Delete(sid)
 
 	// 通知客户端新流
 	notifyPayload := make([]byte, 4)
@@ -219,11 +247,10 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 		return
 	}
 
-	// 双向转发: extConn <-> client control connection
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// ext -> client (通过控制通道)
+	// ext -> client
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 65536)
@@ -244,27 +271,18 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 		}
 	}()
 
-	// client -> ext (从控制连接读取客户端发来的数据)
+	// client -> ext (从流数据通道读取)
 	go func() {
 		defer wg.Done()
 		for {
-			msgType, payload, err := protocol.RecvMsg(client.conn)
-			if err != nil {
-				return
-			}
-			if msgType != protocol.MsgStreamData || len(payload) < 2 {
-				continue
-			}
-			msgSid := binary.BigEndian.Uint16(payload[:2])
-			if msgSid != sid {
-				continue
-			}
-			data := payload[2:]
-			if len(data) > 0 {
+			select {
+			case data := <-stream.inbox:
 				s.trafficTx.Add(uint64(len(data)))
 				if _, werr := extConn.Write(data); werr != nil {
 					return
 				}
+			case <-stream.closeChan:
+				return
 			}
 		}
 	}()

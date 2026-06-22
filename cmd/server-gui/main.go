@@ -30,14 +30,21 @@ type PortMapping struct {
 	LocalPort  int    `json:"local"`
 }
 
+type StreamConn struct {
+	sid       uint16
+	inbox     chan []byte
+	closeChan chan struct{}
+}
+
 type ClientConn struct {
-	id            uint64
-	ip            string
-	conn          net.Conn
-	writer        io.Writer
-	ports         map[int]bool
-	connectedAt   time.Time
-	mu            sync.RWMutex
+	id          uint64
+	ip          string
+	conn        net.Conn
+	writer      io.Writer
+	ports       map[int]bool
+	streams     sync.Map // map[uint16]*StreamConn
+	connectedAt time.Time
+	mu          sync.RWMutex
 }
 
 type Server struct {
@@ -59,22 +66,22 @@ type Server struct {
 }
 
 type ClientInfo struct {
-	ID            uint64   `json:"id"`
-	IP            string   `json:"ip"`
-	Ports         []string `json:"ports"`
-	ConnectedSince string  `json:"connected_since"`
+	ID             uint64   `json:"id"`
+	IP             string   `json:"ip"`
+	Ports          []string `json:"ports"`
+	ConnectedSince string   `json:"connected_since"`
 }
 
 type WSMessage struct {
-	Type    string      `json:"type"`
-	Running bool        `json:"running,omitempty"`
-	Error   string      `json:"error,omitempty"`
-	Clients []ClientInfo `json:"clients,omitempty"`
+	Type    string        `json:"type"`
+	Running bool          `json:"running,omitempty"`
+	Error   string        `json:"error,omitempty"`
+	Clients []ClientInfo  `json:"clients,omitempty"`
 	Ports   []PortMapping `json:"ports,omitempty"`
-	Rx      uint64      `json:"rx,omitempty"`
-	Tx      uint64      `json:"tx,omitempty"`
-	Level   string      `json:"level,omitempty"`
-	Msg     string      `json:"msg,omitempty"`
+	Rx      uint64        `json:"rx,omitempty"`
+	Tx      uint64        `json:"tx,omitempty"`
+	Level   string        `json:"level,omitempty"`
+	Msg     string        `json:"msg,omitempty"`
 }
 
 func NewServer() *Server {
@@ -109,7 +116,6 @@ func (s *Server) Start(secret string, port int, ports []PortMapping) error {
 	s.ports = ports
 	s.running.Store(true)
 
-	// 启动控制端口
 	listener, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
 		s.running.Store(false)
@@ -117,7 +123,6 @@ func (s *Server) Start(secret string, port int, ports []PortMapping) error {
 	}
 	s.ctrlListener = listener
 
-	// 启动业务端口
 	for _, pm := range ports {
 		go s.listenBusiness(pm)
 	}
@@ -128,7 +133,9 @@ func (s *Server) Start(secret string, port int, ports []PortMapping) error {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				if !s.running.Load() { return }
+				if !s.running.Load() {
+					return
+				}
 				continue
 			}
 			go s.handleControl(conn)
@@ -140,10 +147,16 @@ func (s *Server) Start(secret string, port int, ports []PortMapping) error {
 }
 
 func (s *Server) Stop() {
-	if !s.running.Load() { return }
+	if !s.running.Load() {
+		return
+	}
 	s.running.Store(false)
-	if s.ctrlListener != nil { s.ctrlListener.Close() }
-	for _, l := range s.bizListeners { l.Close() }
+	if s.ctrlListener != nil {
+		s.ctrlListener.Close()
+	}
+	for _, l := range s.bizListeners {
+		l.Close()
+	}
 	s.clients.Range(func(key, value interface{}) bool {
 		c := value.(*ClientConn)
 		c.conn.Close()
@@ -168,7 +181,6 @@ func (s *Server) handleControl(conn net.Conn) {
 	peer := conn.RemoteAddr().String()
 	clientIP, _, _ := net.SplitHostPort(peer)
 
-	// 检查拉黑
 	if _, blocked := s.blockedIPs.Load(clientIP); blocked {
 		return
 	}
@@ -205,6 +217,7 @@ func (s *Server) handleControl(conn net.Conn) {
 		s.broadcastClients()
 	}()
 
+	// 单一读取循环：所有消息都在这里处理
 	for {
 		msgType, payload, err := protocol.RecvMsg(conn)
 		if err != nil {
@@ -230,14 +243,36 @@ func (s *Server) handleControl(conn net.Conn) {
 		case protocol.MsgPing:
 			protocol.SendMsg(conn, protocol.MsgPong, payload)
 		case protocol.MsgPong:
+		case protocol.MsgStreamData:
+			if len(payload) >= 2 {
+				sid := binary.BigEndian.Uint16(payload[:2])
+				data := payload[2:]
+				if v, ok := client.streams.Load(sid); ok {
+					sc := v.(*StreamConn)
+					select {
+					case sc.inbox <- data:
+					default:
+					}
+				}
+			}
 		case protocol.MsgStreamClose:
+			if len(payload) == 2 {
+				sid := binary.BigEndian.Uint16(payload[:2])
+				if v, ok := client.streams.Load(sid); ok {
+					sc := v.(*StreamConn)
+					close(sc.closeChan)
+					client.streams.Delete(sid)
+				}
+			}
 		}
 	}
 }
 
 func (s *Server) portsMap() map[int]PortMapping {
 	m := make(map[int]PortMapping)
-	for _, p := range s.ports { m[p.RemotePort] = p }
+	for _, p := range s.ports {
+		m[p.RemotePort] = p
+	}
 	return m
 }
 
@@ -252,7 +287,9 @@ func (s *Server) listenBusiness(pm PortMapping) {
 
 	for s.running.Load() {
 		conn, err := listener.Accept()
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 		go s.handleBusiness(conn, pm)
 	}
 }
@@ -261,7 +298,6 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 	defer extConn.Close()
 	protocol.SetTCPKeepAlive(extConn)
 
-	// 找客户端
 	var client *ClientConn
 	s.clients.Range(func(key, value interface{}) bool {
 		c := value.(*ClientConn)
@@ -279,8 +315,20 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 	}
 
 	sid := uint16(s.streamCounter.Add(1) & 0xFFFF)
-	if sid == 0 { sid = 1 }
+	if sid == 0 {
+		sid = 1
+	}
 
+	// 创建流数据通道
+	stream := &StreamConn{
+		sid:       sid,
+		inbox:     make(chan []byte, 256),
+		closeChan: make(chan struct{}),
+	}
+	client.streams.Store(sid, stream)
+	defer client.streams.Delete(sid)
+
+	// 通知客户端新建流
 	notifyPayload := make([]byte, 4)
 	binary.BigEndian.PutUint16(notifyPayload[:2], sid)
 	binary.BigEndian.PutUint16(notifyPayload[2:], uint16(pm.RemotePort))
@@ -290,6 +338,8 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+
+	// extConn -> client (通过控制连接)
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 65536)
@@ -304,33 +354,30 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 					return
 				}
 			}
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 		}
 	}()
+
+	// client -> extConn (从流数据通道读取)
 	go func() {
 		defer wg.Done()
 		for {
 			select {
-			case <-s.stopCh:
-				return
-			default:
-			}
-			msgType, payload, err := protocol.RecvMsg(client.conn)
-			if err != nil { return }
-			if msgType != protocol.MsgStreamData || len(payload) < 2 {
-				continue
-			}
-			msgSid := binary.BigEndian.Uint16(payload[:2])
-			if msgSid != sid { continue }
-			data := payload[2:]
-			if len(data) > 0 {
+			case data := <-stream.inbox:
 				s.trafficTx.Add(uint64(len(data)))
 				if _, werr := extConn.Write(data); werr != nil {
 					return
 				}
+			case <-stream.closeChan:
+				return
+			case <-s.stopCh:
+				return
 			}
 		}
 	}()
+
 	wg.Wait()
 	protocol.SendMsg(client.writer, protocol.MsgStreamClose, binary.BigEndian.AppendUint16(nil, sid))
 }
@@ -341,16 +388,24 @@ func (s *Server) broadcastClients() {
 		c := value.(*ClientConn)
 		c.mu.RLock()
 		var ports []string
-		for p := range c.ports { ports = append(ports, fmt.Sprintf(":%d", p)) }
-		if ports == nil { ports = []string{} }
+		for p := range c.ports {
+			ports = append(ports, fmt.Sprintf(":%d", p))
+		}
+		if ports == nil {
+			ports = []string{}
+		}
 		list = append(list, ClientInfo{
-			ID: c.id, IP: c.ip, Ports: ports,
+			ID:             c.id,
+			IP:             c.ip,
+			Ports:          ports,
 			ConnectedSince: c.connectedAt.Format("15:04:05"),
 		})
 		c.mu.RUnlock()
 		return true
 	})
-	if list == nil { list = []ClientInfo{} }
+	if list == nil {
+		list = []ClientInfo{}
+	}
 	s.broadcastWS(WSMessage{Type: "clients", Clients: list})
 }
 
@@ -363,13 +418,14 @@ func (s *Server) webHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	s.wsClients.Store(ws, true)
 	defer func() {
 		s.wsClients.Delete(ws)
 		ws.Close()
 	}()
-	// 发送初始状态
 	s.broadcastWS(WSMessage{Type: "status", Running: s.running.Load(), Rx: s.trafficRx.Load(), Tx: s.trafficTx.Load()})
 	s.broadcastClients()
 	s.portsMu.RLock()
@@ -377,7 +433,9 @@ func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	s.portsMu.RUnlock()
 	for {
 		_, _, err := ws.ReadMessage()
-		if err != nil { break }
+		if err != nil {
+			break
+		}
 	}
 }
 
@@ -393,7 +451,9 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.Start(req.Secret, req.Port, req.Ports)
 	resp := map[string]interface{}{"ok": err == nil}
-	if err != nil { resp["error"] = err.Error() }
+	if err != nil {
+		resp["error"] = err.Error()
+	}
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -406,7 +466,6 @@ func (s *Server) apiAddPort(w http.ResponseWriter, r *http.Request) {
 	var pm PortMapping
 	json.NewDecoder(r.Body).Decode(&pm)
 	s.portsMu.Lock()
-	// 检查是否已存在
 	for i, p := range s.ports {
 		if p.RemotePort == pm.RemotePort {
 			s.ports[i] = pm
@@ -426,16 +485,19 @@ func (s *Server) apiAddPort(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiRemovePort(w http.ResponseWriter, r *http.Request) {
-	var req struct { Remote int `json:"remote"` }
+	var req struct {
+		Remote int `json:"remote"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	s.portsMu.Lock()
 	var newPorts []PortMapping
 	for _, p := range s.ports {
-		if p.RemotePort != req.Remote { newPorts = append(newPorts, p) }
+		if p.RemotePort != req.Remote {
+			newPorts = append(newPorts, p)
+		}
 	}
 	s.ports = newPorts
 	s.portsMu.Unlock()
-	// 通知所有客户端注销此端口
 	s.clients.Range(func(key, value interface{}) bool {
 		c := value.(*ClientConn)
 		c.mu.Lock()
@@ -449,7 +511,9 @@ func (s *Server) apiRemovePort(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiDisconnect(w http.ResponseWriter, r *http.Request) {
-	var req struct { ID uint64 `json:"id"` }
+	var req struct {
+		ID uint64 `json:"id"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if v, ok := s.clients.Load(req.ID); ok {
 		c := v.(*ClientConn)
@@ -462,10 +526,11 @@ func (s *Server) apiDisconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiBlock(w http.ResponseWriter, r *http.Request) {
-	var req struct { IP string `json:"ip"` }
+	var req struct {
+		IP string `json:"ip"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	s.blockedIPs.Store(req.IP, true)
-	// 断开该 IP 所有客户端
 	s.clients.Range(func(key, value interface{}) bool {
 		c := value.(*ClientConn)
 		ip, _, _ := net.SplitHostPort(c.ip)
@@ -494,7 +559,9 @@ func (s *Server) apiGetConfig(w http.ResponseWriter, r *http.Request) {
 
 func portList(ports []PortMapping) []int {
 	r := make([]int, len(ports))
-	for i, p := range ports { r[i] = p.RemotePort }
+	for i, p := range ports {
+		r[i] = p.RemotePort
+	}
 	return r
 }
 
@@ -530,7 +597,6 @@ func main() {
 		}
 	}()
 
-	// 等待中断信号
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	<-sig
