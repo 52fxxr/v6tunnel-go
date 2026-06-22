@@ -260,11 +260,13 @@ func (c *Client) openStream(sid uint16, rport int) {
 			}
 			n, err := localConn.Read(buf)
 			if n > 0 {
-				c.trafficRx.Add(uint64(n))
+				c.trafficTx.Add(uint64(n))
 				payload := make([]byte, 2+n)
 				binary.BigEndian.PutUint16(payload, sid)
 				copy(payload[2:], buf[:n])
-				protocol.SendMsg(c.conn, protocol.MsgStreamData, payload)
+				if serr := protocol.SendMsg(c.conn, protocol.MsgStreamData, payload); serr != nil {
+					return
+				}
 			}
 			if err != nil { return }
 		}
@@ -274,8 +276,10 @@ func (c *Client) openStream(sid uint16, rport int) {
 		for {
 			select {
 			case data := <-stream.inbox:
-				c.trafficTx.Add(uint64(len(data)))
-				localConn.Write(data)
+				c.trafficRx.Add(uint64(len(data)))
+				if _, werr := localConn.Write(data); werr != nil {
+					return
+				}
 			case <-stream.closeChan: return
 			}
 		}

@@ -241,7 +241,7 @@ func (c *Client) openStream(sid uint16, rport uint16) {
 				payload := make([]byte, 2+n)
 				binary.BigEndian.PutUint16(payload, sid)
 				copy(payload[2:], buf[:n])
-				if err := protocol.SendMsg(c.conn, protocol.MsgStreamData, payload); err != nil {
+				if serr := protocol.SendMsg(c.conn, protocol.MsgStreamData, payload); serr != nil {
 					return
 				}
 			}
@@ -257,7 +257,7 @@ func (c *Client) openStream(sid uint16, rport uint16) {
 		for {
 			select {
 			case data := <-stream.inbox:
-				if _, err := localConn.Write(data); err != nil {
+				if _, werr := localConn.Write(data); werr != nil {
 					return
 				}
 			case <-stream.closeChan:

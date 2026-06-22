@@ -244,7 +244,7 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 				payload := make([]byte, 2+n)
 				binary.BigEndian.PutUint16(payload, sid)
 				copy(payload[2:], buf[:n])
-				if err := protocol.SendMsg(client.writer, protocol.MsgStreamData, payload); err != nil {
+				if serr := protocol.SendMsg(client.writer, protocol.MsgStreamData, payload); serr != nil {
 					return
 				}
 			}
@@ -262,7 +262,7 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 			n, err := localConn.Read(buf)
 			if n > 0 {
 				s.trafficTx.Add(uint64(n))
-				if _, err := extConn.Write(buf[:n]); err != nil {
+				if _, werr := extConn.Write(buf[:n]); werr != nil {
 					return
 				}
 			}
