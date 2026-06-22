@@ -36,11 +36,6 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Download dependencies
-        run: |
-          go mod tidy
-          go mod download
-
       - name: Build all binaries
         env:
           GOOS: ${{ matrix.goos }}
