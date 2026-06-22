@@ -159,10 +159,6 @@ func (s *Server) statsLoop() {
 			Type: "status", Running: true,
 			Rx: s.trafficRx.Load(), Tx: s.trafficTx.Load(),
 		})
-		s.broadcastWS(WSMessage{
-			Type:    "status",
-			Running: false, Error: "已停止",
-		})
 	}
 }
 
