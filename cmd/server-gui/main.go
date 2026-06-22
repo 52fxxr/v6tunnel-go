@@ -339,7 +339,7 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// extConn -> client (通过控制连接)
+	// extConn -> client (通过控制连接，大数据包分片)
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 65536)
@@ -347,11 +347,20 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 			n, err := extConn.Read(buf)
 			if n > 0 {
 				s.trafficRx.Add(uint64(n))
-				payload := make([]byte, 2+n)
-				binary.BigEndian.PutUint16(payload, sid)
-				copy(payload[2:], buf[:n])
-				if serr := protocol.SendMsg(client.writer, protocol.MsgStreamData, payload); serr != nil {
-					return
+				// 分片发送，每片最多 MaxPayload 字节数据
+				offset := 0
+				for offset < n {
+					chunk := n - offset
+					if chunk > protocol.MaxPayload {
+						chunk = protocol.MaxPayload
+					}
+					payload := make([]byte, 2+chunk)
+					binary.BigEndian.PutUint16(payload, sid)
+					copy(payload[2:], buf[offset:offset+chunk])
+					if serr := protocol.SendMsg(client.writer, protocol.MsgStreamData, payload); serr != nil {
+						return
+					}
+					offset += chunk
 				}
 			}
 			if err != nil {

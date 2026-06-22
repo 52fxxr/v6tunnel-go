@@ -261,11 +261,20 @@ func (c *Client) openStream(sid uint16, rport int) {
 			n, err := localConn.Read(buf)
 			if n > 0 {
 				c.trafficTx.Add(uint64(n))
-				payload := make([]byte, 2+n)
-				binary.BigEndian.PutUint16(payload, sid)
-				copy(payload[2:], buf[:n])
-				if serr := protocol.SendMsg(c.conn, protocol.MsgStreamData, payload); serr != nil {
-					return
+				// 分片发送，每片最多 MaxPayload 字节数据
+				offset := 0
+				for offset < n {
+					chunk := n - offset
+					if chunk > protocol.MaxPayload {
+						chunk = protocol.MaxPayload
+					}
+					payload := make([]byte, 2+chunk)
+					binary.BigEndian.PutUint16(payload, sid)
+					copy(payload[2:], buf[offset:offset+chunk])
+					if serr := protocol.SendMsg(c.conn, protocol.MsgStreamData, payload); serr != nil {
+						return
+					}
+					offset += chunk
 				}
 			}
 			if err != nil { return }

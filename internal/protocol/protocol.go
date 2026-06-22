@@ -49,6 +49,9 @@ func AuthToken(secret string, ts int64) []byte {
 	return h.Sum(nil)
 }
 
+// MaxPayload 单条消息最大 payload 大小（留 2 字节给 stream id）
+const MaxPayload = 0xFFFF - 2
+
 // SendMsg 发送一条协议消息
 func SendMsg(w io.Writer, msgType byte, payload []byte) error {
 	if len(payload) > 0xFFFF {
