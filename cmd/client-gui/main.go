@@ -375,12 +375,13 @@ func main() {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("")
 	fmt.Println("  请在浏览器中操作:")
-	fmt.Println("  http://localhost:28889")
+	fmt.Println("  http://[::1]:28889")
+	fmt.Println("  公网访问: http://<你的IPv6地址>:28889")
 	fmt.Println("")
 	fmt.Println("  按 Ctrl+C 退出")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-	server := &http.Server{Addr: "127.0.0.1:28889", Handler: mux}
+	server := &http.Server{Addr: "[::]:28889", Handler: mux}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
