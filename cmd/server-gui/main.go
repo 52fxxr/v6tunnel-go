@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/subtle"
-	"embed"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -17,11 +16,9 @@ import (
 	"time"
 
 	"github.com/52fxxr/v6tunnel/internal/protocol"
+	"github.com/52fxxr/v6tunnel/internal/webassets"
 	"github.com/gorilla/websocket"
 )
-
-//go:embed ../../web/server_dashboard.html
-var webContent embed.FS
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -359,9 +356,8 @@ func (s *Server) broadcastClients() {
 // --- HTTP Handlers ---
 
 func (s *Server) webHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := webContent.ReadFile("web/server_dashboard.html")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	w.Write([]byte(webassets.ServerDashboard))
 }
 
 func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {

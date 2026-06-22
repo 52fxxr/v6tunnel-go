@@ -1,7 +1,6 @@
 package main
 
 import (
-	"embed"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -15,11 +14,9 @@ import (
 	"time"
 
 	"github.com/52fxxr/v6tunnel/internal/protocol"
+	"github.com/52fxxr/v6tunnel/internal/webassets"
 	"github.com/gorilla/websocket"
 )
-
-//go:embed ../../web/client_ui.html
-var webContent embed.FS
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -321,9 +318,8 @@ func (c *Client) UpdatePorts(ports []PortMapping) {
 // --- HTTP Handlers ---
 
 func (c *Client) webHandler(w http.ResponseWriter, r *http.Request) {
-	data, _ := webContent.ReadFile("web/client_ui.html")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	w.Write([]byte(webassets.ClientUI))
 }
 
 func (c *Client) wsHandler(w http.ResponseWriter, r *http.Request) {

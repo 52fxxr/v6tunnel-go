@@ -55,7 +55,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
     <h2>⚙️ 连接配置</h2>
     <div class="form-row">
       <label>服务器地址</label>
-      <input type="text" id="serverAddr" placeholder="2400:xxxx::1:7000" value="[2400::1]:7000">
+      <input type="text" id="serverAddr" placeholder="[2400:xxxx::1]:7000" value="">
     </div>
     <div class="form-row">
       <label>共享密钥</label>
@@ -93,14 +93,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 </div>
 
 <script>
-const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 var ws = null;
 var connected = false;
 var ports = [{remote:7001, host:'127.0.0.1', local:25565}];
 
 function connectWS() {
   if (ws) try { ws.close(); } catch(e) {}
-  ws = new WebSocket(wsProto + '//' + location.host + '/ws');
+  ws = new WebSocket('ws://' + location.host + '/ws');
   ws.onmessage = function(e) {
     var data = JSON.parse(e.data);
     switch(data.type) {
@@ -109,7 +108,6 @@ function connectWS() {
     }
   };
   ws.onclose = function() { setTimeout(connectWS, 2000); };
-  ws.onerror = function() {};
 }
 
 function updateStatus(data) {
@@ -180,13 +178,6 @@ function addPort() {
 function removePort(idx) {
   ports.splice(idx, 1);
   refreshPortUI();
-  if (connected) {
-    fetch('/api/ports', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ports: ports})
-    });
-  }
 }
 
 function doConnect() {
@@ -199,14 +190,14 @@ function doConnect() {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({server: addr, secret: secret, ports: ports, auto_reconnect: autoreconn})
-  }).then(r => r.json()).then(d => {
+  }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.error) addLog('error', d.error);
     else addLog('ok', '正在连接...');
   });
 }
 
 function doDisconnect() {
-  fetch('/api/disconnect', {method:'POST'}).then(r => r.json()).then(d => {
+  fetch('/api/disconnect', {method:'POST'}).then(function(r) { return r.json(); }).then(function(d) {
     addLog('warn', '已断开连接');
   });
 }
