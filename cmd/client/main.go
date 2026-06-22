@@ -293,7 +293,14 @@ func (c *Client) Stop() {
 func main() {
 	flag.Parse()
 	if *serverAddr == "" || *secret == "" {
-		fmt.Fprintln(os.Stderr, "用法: client -server <IPv6:端口> -s <密钥>")
+		fmt.Println("v6tunnel 客户端")
+		fmt.Println("用法: v6tunnel-client.exe -server <IPv6:端口> -s <密钥>")
+		fmt.Println("")
+		fmt.Println("示例:")
+		fmt.Println("  v6tunnel-client.exe -server [2400::1]:7000 -s mysecret")
+		fmt.Println("")
+		fmt.Println("按回车键退出...")
+		fmt.Scanln()
 		os.Exit(1)
 	}
 

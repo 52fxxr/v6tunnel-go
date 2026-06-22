@@ -288,7 +288,15 @@ func getPortKeys(m map[int]*PortMapping) []int {
 func main() {
 	flag.Parse()
 	if *secret == "" {
-		fmt.Fprintln(os.Stderr, "请指定共享密钥: -s <secret>")
+		fmt.Println("v6tunnel 服务器端")
+		fmt.Println("用法: v6tunnel-server.exe -s <共享密钥> [-l [::]:7000]")
+		fmt.Println("")
+		fmt.Println("示例:")
+		fmt.Println("  v6tunnel-server.exe -s mysecret")
+		fmt.Println("  v6tunnel-server.exe -s mysecret -l [::]:7000")
+		fmt.Println("")
+		fmt.Println("按回车键退出...")
+		fmt.Scanln()
 		os.Exit(1)
 	}
 
