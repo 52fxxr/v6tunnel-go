@@ -1,6 +1,6 @@
 package webassets
 
-import "embed"
+import _ "embed"
 
 //go:embed server_dashboard.html
 var ServerDashboard string
