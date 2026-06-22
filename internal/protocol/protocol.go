@@ -87,18 +87,4 @@ func RecvMsg(r io.Reader) (byte, []byte, error) {
 	return msgType, payload, nil
 }
 
-// SetTCPKeepAlive 设置 TCP 保活参数
-func SetTCPKeepAlive(conn net.Conn) {
-	tcpConn, ok := conn.(*net.TCPConn)
-	if !ok {
-		return
-	}
-	tcpConn.SetNoDelay(true)
-	tcpConn.SetKeepAlive(true)
-	// 尝试设置更激进的 keepalive 参数（Linux）
-	if raw, err := tcpConn.SyscallConn(); err == nil {
-		raw.Control(func(fd uintptr) {
-			setKeepAliveParams(int(fd))
-		})
-	}
-}
+
