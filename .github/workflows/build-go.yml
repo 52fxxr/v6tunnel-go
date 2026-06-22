@@ -37,20 +37,18 @@ jobs:
           go-version: '1.22'
 
       - name: Build server
-        working-directory: v6tunnel-go
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags="-s -w" -o ../dist/v6tunnel-server-${{ matrix.suffix }} ./cmd/server
+          go build -ldflags="-s -w" -o dist/v6tunnel-server-${{ matrix.suffix }} ./cmd/server
 
       - name: Build client
-        working-directory: v6tunnel-go
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags="-s -w" -o ../dist/v6tunnel-client-${{ matrix.suffix }} ./cmd/client
+          go build -ldflags="-s -w" -o dist/v6tunnel-client-${{ matrix.suffix }} ./cmd/client
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
