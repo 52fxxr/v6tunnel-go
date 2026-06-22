@@ -1,0 +1,59 @@
+name: Build Go Binaries
+
+on:
+  push:
+    tags:
+      - 'go-*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64.exe
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build server
+        working-directory: v6tunnel-go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags="-s -w" -o ../dist/v6tunnel-server-${{ matrix.suffix }} ./cmd/server
+
+      - name: Build client
+        working-directory: v6tunnel-go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags="-s -w" -o ../dist/v6tunnel-client-${{ matrix.suffix }} ./cmd/client
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6tunnel-go-${{ matrix.suffix }}
+          path: dist/*
