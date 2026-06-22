@@ -36,19 +36,19 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Build server
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          go build -ldflags="-s -w" -o dist/v6tunnel-server-${{ matrix.suffix }} ./cmd/server
+      - name: Download dependencies
+        run: go mod download
 
-      - name: Build client
+      - name: Build all binaries
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags="-s -w" -o dist/v6tunnel-client-${{ matrix.suffix }} ./cmd/client
+          mkdir -p dist
+          go build -ldflags="-s -w" -o dist/v6tunnel-server-cli-${{ matrix.suffix }} ./cmd/server
+          go build -ldflags="-s -w" -o dist/v6tunnel-client-cli-${{ matrix.suffix }} ./cmd/client
+          go build -ldflags="-s -w" -o dist/v6tunnel-server-gui-${{ matrix.suffix }} ./cmd/server-gui
+          go build -ldflags="-s -w" -o dist/v6tunnel-client-gui-${{ matrix.suffix }} ./cmd/client-gui
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

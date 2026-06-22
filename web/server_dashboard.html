@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>v6tunnel 服务器控制台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:20px;color:#f0f6fc}
+.header .status{display:flex;align-items:center;gap:8px;font-size:14px}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.dot.green{background:#3fb950}
+.dot.red{background:#f85149}
+.dot.yellow{background:#d29922}
+.container{display:flex;gap:16px;padding:16px 24px;flex-wrap:wrap}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;flex:1;min-width:300px}
+.card h2{font-size:15px;color:#f0f6fc;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #30363d}
+.form-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
+.form-row label{font-size:13px;color:#8b949e;min-width:70px}
+.form-row input,.form-row select{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px 10px;color:#c9d1d9;font-size:13px;flex:1;min-width:80px}
+.form-row input:focus{outline:none;border-color:#58a6ff}
+.btn{background:#21262d;border:1px solid #30363d;border-radius:6px;padding:6px 14px;color:#c9d1d9;font-size:13px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#30363d}
+.btn-primary{background:#238636;border-color:#2ea043;color:#fff}
+.btn-primary:hover{background:#2ea043}
+.btn-danger{background:#da3633;border-color:#f85149;color:#fff}
+.btn-danger:hover{background:#f85149}
+.btn-sm{padding:4px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 6px;border-bottom:2px solid #30363d;color:#8b949e;font-weight:600;font-size:12px;text-transform:uppercase}
+td{padding:8px 6px;border-bottom:1px solid #21262d}
+tr:hover{background:#1c2128}
+.mapping-row{display:flex;gap:6px;margin-bottom:6px;align-items:center;flex-wrap:wrap}
+.mapping-row input{flex:1;min-width:60px}
+.mapping-row .btn{flex-shrink:0}
+.log-panel{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;height:180px;overflow-y:auto;font-family:"Cascadia Code","Fira Code",monospace;font-size:12px;line-height:1.6}
+.log-panel div{padding:1px 4px}
+.log-panel .info{color:#58a6ff}
+.log-panel .warn{color:#d29922}
+.log-panel .error{color:#f85149}
+.log-panel .ok{color:#3fb950}
+.traffic{font-size:13px;color:#8b949e;margin-top:8px}
+.traffic span{color:#c9d1d9;font-weight:600}
+.empty-msg{color:#8b949e;text-align:center;padding:20px;font-size:14px}
+.actions{display:flex;gap:6px;justify-content:center}
+.actions .btn{padding:3px 8px;font-size:11px}
+@media(max-width:768px){.container{padding:8px;gap:8px}.card{min-width:100%}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🔌 v6tunnel 服务器控制台</h1>
+  <div class="status">
+    <span id="statusDot" class="dot red"></span>
+    <span id="statusText">未启动</span>
+    <span id="trafficDisplay" style="margin-left:16px;color:#8b949e;font-size:13px"></span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="card" style="flex:0 0 auto;max-width:500px">
+    <h2>⚙️ 服务器配置</h2>
+    <div class="form-row">
+      <label>控制端口</label>
+      <input type="number" id="ctrlPort" value="7000" min="1" max="65535">
+    </div>
+    <div class="form-row">
+      <label>共享密钥</label>
+      <input type="text" id="secret" placeholder="输入密钥">
+    </div>
+    <div class="form-row">
+      <button class="btn btn-primary" id="btnStart" onclick="doStart()">▶ 启动</button>
+      <button class="btn btn-danger" id="btnStop" onclick="doStop()" disabled>■ 停止</button>
+    </div>
+
+    <h2 style="margin-top:16px">📡 业务端口</h2>
+    <div id="portMappings"></div>
+    <div class="form-row" style="margin-top:8px">
+      <input type="number" id="newRport" placeholder="远端端口" style="flex:1" value="7001">
+      <input type="text" id="newHost" placeholder="127.0.0.1" style="flex:1" value="127.0.0.1">
+      <input type="number" id="newLport" placeholder="本地端口" style="flex:1" value="25565">
+      <button class="btn" onclick="addPort()">+ 添加</button>
+    </div>
+  </div>
+
+  <div class="card" style="flex:2;min-width:400px">
+    <h2>👥 已连接客户端</h2>
+    <div id="clientList"><div class="empty-msg">暂无客户端连接</div></div>
+    
+    <h2 style="margin-top:16px">📋 运行日志</h2>
+    <div class="log-panel" id="logPanel"></div>
+  </div>
+</div>
+
+<script>
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+var ws = null;
+var running = false;
+var blockList = [];
+
+function connectWS() {
+  if (ws) try { ws.close(); } catch(e) {}
+  ws = new WebSocket(wsProto + '//' + location.host + '/ws');
+  ws.onmessage = function(e) {
+    var data = JSON.parse(e.data);
+    switch(data.type) {
+      case 'status': updateStatus(data); break;
+      case 'clients': updateClients(data.clients); break;
+      case 'log': addLog(data.level, data.msg); break;
+      case 'ports': updatePorts(data.ports); break;
+    }
+  };
+  ws.onclose = function() { setTimeout(connectWS, 2000); };
+  ws.onerror = function() {};
+}
+
+function updateStatus(data) {
+  running = data.running;
+  var dot = document.getElementById('statusDot');
+  var txt = document.getElementById('statusText');
+  dot.className = 'dot ' + (running ? 'green' : (data.error ? 'red' : 'yellow'));
+  txt.textContent = data.running ? '运行中' : (data.error || '未启动');
+  document.getElementById('btnStart').disabled = running;
+  document.getElementById('btnStop').disabled = !running;
+  if (data.rx !== undefined) {
+    document.getElementById('trafficDisplay').textContent = 
+      '↓' + fmtBytes(data.rx) + ' ↑' + fmtBytes(data.tx);
+  }
+}
+
+function updateClients(clients) {
+  var el = document.getElementById('clientList');
+  if (!clients || clients.length === 0) {
+    el.innerHTML = '<div class="empty-msg">暂无客户端连接</div>';
+    return;
+  }
+  var h = '<table><tr><th>IP 地址</th><th>注册端口</th><th>连接时间</th><th>操作</th></tr>';
+  for (var i = 0; i < clients.length; i++) {
+    var c = clients[i];
+    h += '<tr><td style="font-family:monospace;font-size:12px">' + escHtml(c.ip) + '</td>' +
+         '<td>' + c.ports.join(', ') + '</td>' +
+         '<td>' + (c.connected_since || '-') + '</td>' +
+         '<td class="actions">' +
+         '<button class="btn btn-sm btn-danger" onclick="disconnect(' + c.id + ')">断开</button>' +
+         '<button class="btn btn-sm" onclick="blockIP(\'' + escHtml(c.ip.replace(/:\d+$/, '')) + '\')">拉黑</button>' +
+         '</td></tr>';
+  }
+  h += '</table>';
+  el.innerHTML = h;
+}
+
+function updatePorts(ports) {
+  var el = document.getElementById('portMappings');
+  if (!ports || ports.length === 0) {
+    el.innerHTML = '<div class="empty-msg">未配置业务端口</div>';
+    return;
+  }
+  var h = '';
+  for (var i = 0; i < ports.length; i++) {
+    var p = ports[i];
+    h += '<div class="mapping-row">' +
+         '<span style="font-family:monospace;font-size:13px">:' + p.remote + ' → ' +
+         escHtml(p.host) + ':' + p.local + '</span>' +
+         '<button class="btn btn-sm btn-danger" onclick="removePort(' + p.remote + ')">✕</button>' +
+         '</div>';
+  }
+  el.innerHTML = h;
+}
+
+function addLog(level, msg) {
+  var el = document.getElementById('logPanel');
+  var d = document.createElement('div');
+  d.className = level;
+  d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return b + 'B';
+  if (b < 1048576) return (b/1024).toFixed(1) + 'KB';
+  return (b/1048576).toFixed(1) + 'MB';
+}
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function doStart() {
+  var port = parseInt(document.getElementById('ctrlPort').value) || 7000;
+  var secret = document.getElementById('secret').value.trim();
+  if (!secret) { addLog('warn', '请输入共享密钥'); return; }
+  fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({port: port, secret: secret})
+  }).then(r => r.json()).then(d => {
+    if (d.error) addLog('error', d.error);
+    else addLog('ok', '服务器已启动');
+  });
+}
+
+function doStop() {
+  fetch('/api/stop', {method:'POST'}).then(r => r.json()).then(d => {
+    addLog('warn', '服务器已停止');
+  });
+}
+
+function addPort() {
+  var rp = parseInt(document.getElementById('newRport').value);
+  var host = document.getElementById('newHost').value.trim() || '127.0.0.1';
+  var lp = parseInt(document.getElementById('newLport').value);
+  if (!rp || !lp) return;
+  fetch('/api/add-port', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({remote: rp, host: host, local: lp})
+  }).then(r => r.json()).then(d => {
+    if (d.error) addLog('error', d.error);
+    else addLog('ok', '已添加端口 :' + rp + ' → ' + host + ':' + lp);
+  });
+}
+
+function removePort(rport) {
+  fetch('/api/remove-port', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({remote: rport})
+  }).then(r => r.json()).then(d => {
+    if (d.error) addLog('error', d.error);
+    else addLog('warn', '已移除端口 :' + rport);
+  });
+}
+
+function disconnect(id) {
+  fetch('/api/disconnect', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({id: id})
+  }).then(r => r.json()).then(d => {
+    if (d.error) addLog('error', d.error);
+    else addLog('warn', '已断开客户端 #' + id);
+  });
+}
+
+function blockIP(ip) {
+  var cleanIP = ip.replace(/^\[?([^\]]+)\]?.*$/, '$1');
+  fetch('/api/block', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ip: cleanIP})
+  }).then(r => r.json()).then(d => {
+    if (d.error) addLog('error', d.error);
+    else addLog('warn', '已拉黑 IP: ' + cleanIP);
+  });
+}
+
+connectWS();
+</script>
+</body>
+</html>
