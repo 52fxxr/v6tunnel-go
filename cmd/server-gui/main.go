@@ -288,14 +288,6 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 		return
 	}
 
-	localConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", pm.LocalHost, pm.LocalPort), 5*time.Second)
-	if err != nil {
-		protocol.SendMsg(client.writer, protocol.MsgStreamClose, binary.BigEndian.AppendUint16(nil, sid))
-		return
-	}
-	defer localConn.Close()
-	protocol.SetTCPKeepAlive(localConn)
-
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -308,7 +300,7 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 				payload := make([]byte, 2+n)
 				binary.BigEndian.PutUint16(payload, sid)
 				copy(payload[2:], buf[:n])
-				if err := protocol.SendMsg(client.writer, protocol.MsgStreamData, payload); err != nil {
+				if serr := protocol.SendMsg(client.writer, protocol.MsgStreamData, payload); serr != nil {
 					return
 				}
 			}
@@ -317,16 +309,26 @@ func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 	}()
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 65536)
 		for {
-			n, err := localConn.Read(buf)
-			if n > 0 {
-				s.trafficTx.Add(uint64(n))
-				if _, werr := extConn.Write(buf[:n]); werr != nil {
+			select {
+			case <-s.stopCh:
+				return
+			default:
+			}
+			msgType, payload, err := protocol.RecvMsg(client.conn)
+			if err != nil { return }
+			if msgType != protocol.MsgStreamData || len(payload) < 2 {
+				continue
+			}
+			msgSid := binary.BigEndian.Uint16(payload[:2])
+			if msgSid != sid { continue }
+			data := payload[2:]
+			if len(data) > 0 {
+				s.trafficTx.Add(uint64(len(data)))
+				if _, werr := extConn.Write(data); werr != nil {
 					return
 				}
 			}
-			if err != nil { return }
 		}
 	}()
 	wg.Wait()

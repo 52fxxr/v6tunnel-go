@@ -219,21 +219,11 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 		return
 	}
 
-	// 连接本地服务
-	localConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", pm.LocalHost, pm.LocalPort))
-	if err != nil {
-		log.Printf("business: connect local %s:%d failed: %v", pm.LocalHost, pm.LocalPort, err)
-		protocol.SendMsg(client.writer, protocol.MsgStreamClose, binary.BigEndian.AppendUint16(nil, sid))
-		return
-	}
-	defer localConn.Close()
-	protocol.SetTCPKeepAlive(localConn)
-
-	// 双向转发
+	// 双向转发: extConn <-> client control connection
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// ext -> local (通过控制通道)
+	// ext -> client (通过控制通道)
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 65536)
@@ -254,20 +244,27 @@ func (s *Server) handleBusiness(extConn net.Conn, rport int, pm *PortMapping) {
 		}
 	}()
 
-	// local -> ext
+	// client -> ext (从控制连接读取客户端发来的数据)
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 65536)
 		for {
-			n, err := localConn.Read(buf)
-			if n > 0 {
-				s.trafficTx.Add(uint64(n))
-				if _, werr := extConn.Write(buf[:n]); werr != nil {
-					return
-				}
-			}
+			msgType, payload, err := protocol.RecvMsg(client.conn)
 			if err != nil {
 				return
+			}
+			if msgType != protocol.MsgStreamData || len(payload) < 2 {
+				continue
+			}
+			msgSid := binary.BigEndian.Uint16(payload[:2])
+			if msgSid != sid {
+				continue
+			}
+			data := payload[2:]
+			if len(data) > 0 {
+				s.trafficTx.Add(uint64(len(data)))
+				if _, werr := extConn.Write(data); werr != nil {
+					return
+				}
 			}
 		}
 	}()
