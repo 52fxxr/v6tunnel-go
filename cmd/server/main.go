@@ -11,7 +11,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/52fxxr/v6tunnel/internal/protocol"
 )
