@@ -260,7 +260,6 @@ func (s *Server) listenBusiness(pm PortMapping) {
 func (s *Server) handleBusiness(extConn net.Conn, pm PortMapping) {
 	defer extConn.Close()
 	protocol.SetTCPKeepAlive(extConn)
-	peer := extConn.RemoteAddr().String()
 
 	// 找客户端
 	var client *ClientConn
