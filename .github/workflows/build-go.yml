@@ -42,6 +42,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
+          # 先下载依赖生成 go.sum
+          GONOSUMCHECK=* GONOSUMDB=* GOFLAGS=-mod=mod go mod download
           go build -ldflags="-s -w" -o dist/v6tunnel-server-cli-${{ matrix.suffix }} ./cmd/server
           go build -ldflags="-s -w" -o dist/v6tunnel-client-cli-${{ matrix.suffix }} ./cmd/client
           go build -ldflags="-s -w" -o dist/v6tunnel-server-gui-${{ matrix.suffix }} ./cmd/server-gui
